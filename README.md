@@ -125,6 +125,10 @@ More plots and ablations can be found in the `run_experiments/plots` folder.
 ## 3. Usage 
 
 Here's how to use CrisperWhisper in your Python scripts:
+First install our custom transformers fork for the most accurate timestamps:
+```
+pip install git+https://github.com/nyrahealth/transformers.git@crisper_whisper
+```
 
 ### 3.1 Usage with 🤗 transformers
 First make sure that you have a huggingface account and accept the licensing of the [model](https://huggingface.co/nyrahealth/CrisperWhisper). Grab you huggingface access token and login so you are certainly able to download the model.
