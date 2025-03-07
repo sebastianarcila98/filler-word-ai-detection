@@ -1,5 +1,6 @@
 import argparse
 import io
+import os
 from typing import Any, Dict, List, Tuple, Union
 
 import moviepy.editor as mp
@@ -59,6 +60,40 @@ def setup_pipeline(
         torch_dtype=torch_dtype,
         device=device,
     )
+
+def extract_audio_from_video(video_bytes: bytes) -> bytes:
+    """Extract audio from video file and convert to WAV format."""
+    # Save video bytes to temporary file
+    with open("temp_video.mp4", "wb") as f:
+        f.write(video_bytes)
+    
+    try:
+        # Extract audio using moviepy
+        video = mp.VideoFileClip("temp_video.mp4")
+        if video.audio is None:
+            raise ValueError("No audio track found in video file")
+            
+        # Save audio to temporary WAV file
+        video.audio.write_audiofile("temp_audio.wav", verbose=False, logger=None, fps=16000, nbytes=2, codec='pcm_s16le')
+        video.close()
+        
+        # Convert to mono if stereo
+        waveform, sample_rate = torchaudio.load("temp_audio.wav")
+        if waveform.shape[0] > 1:  # If stereo (2 channels or more)
+            waveform = torch.mean(waveform, dim=0, keepdim=True)  # Convert to mono
+            torchaudio.save("temp_audio.wav", waveform, sample_rate)
+        
+        # Read the WAV file back as bytes
+        with open("temp_audio.wav", "rb") as f:
+            audio_bytes = f.read()
+            
+        return audio_bytes
+    finally:
+        # Clean up temporary files
+        if os.path.exists("temp_video.mp4"):
+            os.remove("temp_video.mp4")
+        if os.path.exists("temp_audio.wav"):
+            os.remove("temp_audio.wav")
 
 
 def wav_to_black_mp4(wav_path: str, output_path: str, fps: int = 25) -> None:
@@ -132,32 +167,41 @@ audio = mic_recorder(
 
 audio_bytes: Union[bytes, None] = audio["bytes"] if audio else None
 
-# Audio file upload handling
-audio_file = st.file_uploader("Or upload an audio file", type=["wav", "mp3", "ogg"])
+# Audio/video file upload handling
+uploaded_file = st.file_uploader("Or upload an audio/video file", type=["wav", "mp3", "ogg", "mp4"])
 
-if audio_file is not None:
-    audio_bytes = audio_file.getvalue()
+if uploaded_file is not None:
+    try:
+        if uploaded_file.type == "video/mp4":
+            # Process the video
+            audio_bytes = extract_audio_from_video(uploaded_file.getvalue())
+        else:
+            audio_bytes = uploaded_file.getvalue()
+    except Exception as e:
+        st.error(f"Error processing uploaded file: {e}")
+        audio_bytes = None
 
 if audio_bytes:
     try:
-        transcription = transcribe(audio_bytes)
-        vtt = timestamps_to_vtt(transcription["chunks"])
+        with st.spinner("Transcribing audio..."):
+            transcription = transcribe(audio_bytes)
+            vtt = timestamps_to_vtt(transcription["chunks"])
 
-        with open("subtitles.vtt", "w") as file:
-            file.write(vtt)
+            with open("subtitles.vtt", "w") as file:
+                file.write(vtt)
 
-        wav_to_black_mp4("sample.wav", "video.mp4")
+            wav_to_black_mp4("sample.wav", "video.mp4")
 
-        st.video("video.mp4", subtitles="subtitles.vtt")
-        st.subheader("Transcription:")
-        st.markdown(
-            f"""
-            <div style="background-color: #f0f0f0; padding: 10px; border-radius: 5px;">
-                <p style="font-size: 16px; color: #333;">{transcription['text']}</p>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
+            st.video("video.mp4", subtitles="subtitles.vtt")
+            st.subheader("Transcription:")
+            st.markdown(
+                f"""
+                <div style="background-color: #f0f0f0; padding: 10px; border-radius: 5px;">
+                    <p style="font-size: 16px; color: #333;">{transcription['text']}</p>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
     except Exception as e:
         st.error(f"An error occurred during transcription: {e}")
 
